@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Quipwhip — Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0e1026; --panel:#15183a; --ink:#eef1ff; --muted:#a7b2ff; --accent:#7cf; --ok:#81f5a5; --warn:#ffd166; --bad:#ff6b6b;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; background:radial-gradient(1000px 700px at -10% 0%, #2843a7 0%, transparent 50%),
+               radial-gradient(900px 800px at 110% 30%, #5d2899 0%, transparent 45%), var(--bg);
+      color:var(--ink); font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial,"Noto Sans";
+      display:grid; grid-template-rows:auto 1fr; gap:10px; padding:14px;
+    }
+    header{display:flex; align-items:center; justify-content:space-between}
+    .brand{font-weight:700}
+    .card{background:linear-gradient(180deg, #1a1d3d, #121531); border:1px solid #2b2f61; border-radius:18px; padding:16px; box-shadow:0 12px 30px rgba(0,0,0,.3)}
+    input, button, textarea{
+      width:100%; background:#0f1234; color:var(--ink); border:1px solid #2c3064; border-radius:14px; padding:11px 12px; font-size:16px;
+    }
+    button{background:linear-gradient(180deg,#3640a2,#2b327c); border-color:#4f58c9; cursor:pointer; transition:.15s}
+    button:active{transform:translateY(1px)}
+    .muted{color:#a9b4df}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,"Roboto Mono",monospace}
+    .big{font-size:1.2rem}
+    .timer{font-variant-numeric:tabular-nums; background:#0d1030; border:1px solid #363c86; padding:6px 10px; border-radius:10px}
+    .row{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+    .hidden{display:none !important}
+    textarea{min-height:90px; resize:vertical}
+    .opt{display:block; background:#121538; border:1px solid #333a86; border-radius:14px; padding:10px 12px; margin:10px 0; text-align:left}
+    .opt[disabled]{opacity:.6}
+    .ok{background:linear-gradient(180deg,#2c8d4f,#1c6b39); border-color:#36a65e}
+    .ghost{background:#161a43}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">📱 Quipwhip <span class="muted">· Player</span></div>
+    <div class="timer" id="phaseTimer">—</div>
+  </header>
+
+  <main class="card" id="panel">
+    <!-- Filled by JS -->
+  </main>
+
+  <script type="module">
+    import { JillBagPlayer } from 'https://elan-r.github.io/JillBag/jillBag.js';
+
+    const MSG = {
+      JOIN: "join", LOBBY: "lobby", START:"start", PROMPT:"prompt", ANSWER:"answer",
+      REVEAL:"reveal", VOTE:"vote", RESULTS:"results", SCORE:"score", PHASE:"phase", END:"end"
+    };
+
+    const $ = sel => document.querySelector(sel);
+    const panel = $("#panel");
+    const timerEl = $("#phaseTimer");
+    const now = () => Date.now();
+
+    class QuipwhipPlayer extends JillBagPlayer {
+      constructor(hostId) {
+        super(hostId);
+        this.name = "";
+        this.playerId = null; // our JillBag id is embedded in peer, but we don't need it separately
+        this.currentPrompt = null; // {id,text,endsAt}
+        this.options = []; // reveal options
+        this.endsAt = null;
+        this.scores = {};
+      }
+
+      // --- JillBag hooks
+      handlePeerReady(myId) {
+        super.handlePeerReady(myId);
+        this.renderJoin();
+      }
+
+      handleOpen() {
+        super.handleOpen();
+        // send JOIN once name is known (might not have yet)
+        const urlHost = new URL(location.href).searchParams.get("host");
+        if (!urlHost || urlHost !== this.hostId) {
+          // hostId provided in constructor; we keep going
+        }
+      }
+
+      handleData(data) {
+        switch (data.type) {
+          case MSG.LOBBY:
+            this.renderLobby(data.players, data.hostId);
+            break;
+          case MSG.START:
+            this.renderWaiting("Game starting…");
+            break;
+          case MSG.PROMPT:
+            this.currentPrompt = data;
+            this.startPhaseTimer(data.endsAt);
+            this.renderPrompt(data);
+            break;
+          case MSG.REVEAL:
+            this.options = data.options;
+            this.startPhaseTimer(data.endsAt);
+            this.renderVote(data);
+            break;
+          case MSG.RESULTS:
+            this.renderResults(data);
+            break;
+          case MSG.SCORE:
+            this.scores = data.scores || {};
+            break;
+          case MSG.PHASE:
+            this.startPhaseTimer(data.endsAt || null);
+            break;
+          case MSG.END:
+            this.renderFinal(data.scores || this.scores);
+            break;
+          default: break;
+        }
+      }
+
+      // --- UI
+      renderJoin() {
+        panel.innerHTML = "";
+        const form = document.createElement("div");
+        form.innerHTML = `
+          <div class="muted">Join a room</div>
+          <div style="margin-top:6px" class="row">
+            <input id="hostCode" placeholder="Host code (e.g., ABC123)" />
+            <input id="name" placeholder="Your name" maxlength="16"/>
+          </div>
+          <div style="margin-top:10px" class="row">
+            <button id="joinBtn" class="ok">Join</button>
+            <button id="randBtn" class="ghost">Random Name</button>
+          </div>
+          <div class="muted" style="margin-top:10px">Tip: If you opened a link from the host, the host code may already be set.</div>
+        `;
+        panel.append(form);
+        const params = new URL(location.href).searchParams;
+        const hostParam = params.get("host");
+        if (hostParam) $("#hostCode").value = hostParam;
+
+        $("#randBtn").addEventListener("click", ()=>{
+          $("#name").value = this.randomFunName();
+        });
+
+        $("#joinBtn").addEventListener("click", ()=>{
+          const code = ($("#hostCode").value || "").trim().toUpperCase();
+          const nm = ($("#name").value || "Player").trim();
+          if (!code) { alert("Enter the host code"); return; }
+          this.hostId = code;
+          this.name = nm.slice(0,16);
+          // Ensure connection (JillBagPlayer connects on peer open; if already connected, ok)
+          this.sendJoin();
+          this.renderWaiting("Connecting to host…");
+        });
+      }
+
+      renderLobby(players, hostId) {
+        panel.innerHTML = "";
+        const title = document.createElement("div");
+        title.className="big";
+        title.textContent = "Lobby";
+        const you = document.createElement("div");
+        you.className="muted";
+        you.textContent = `You: ${this.name || "(not set)"}`;
+        const list = document.createElement("div");
+        for (const p of players) {
+          const line = document.createElement("div");
+          line.textContent = `${p.connected?"🟢":"🔘"} ${p.name}`;
+          list.append(line);
+        }
+        panel.append(title, you, list);
+      }
+
+      renderWaiting(msg="Waiting…") {
+        panel.innerHTML = `<div class="big">${msg}</div>`;
+      }
+
+      renderPrompt({ id, text, endsAt }) {
+        panel.innerHTML = "";
+        const q = document.createElement("div");
+        q.innerHTML = `
+          <div class="muted">Prompt</div>
+          <div class="big" style="margin:.2rem 0 1rem 0">${text}</div>
+          <textarea id="answer" maxlength="120" placeholder="Type your quip (max 120 chars)…"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button id="submit" class="ok">Submit</button>
+            <button id="clear" class="ghost">Clear</button>
+          </div>
+          <div class="muted" style="margin-top:6px">Don't overthink it—funny wins.</div>
+        `;
+        panel.append(q);
+        $("#clear").addEventListener("click", ()=> { $("#answer").value=""; $("#answer").focus(); });
+        $("#submit").addEventListener("click", ()=>{
+          const txt = ($("#answer").value || "").trim();
+          if (!txt) { alert("Write something!"); return; }
+          this.sendHost({ type: MSG.ANSWER, id, text: txt });
+          $("#answer").disabled = true;
+          $("#submit").disabled = true;
+          this.renderWaiting("Answer submitted! Waiting for others…");
+        });
+      }
+
+      renderVote({ id, options }) {
+        panel.innerHTML = "";
+        const v = document.createElement("div");
+        v.innerHTML = `<div class="muted">Pick your favorite</div>`;
+        // Determine our own answer aid (so we can't vote for ourselves)
+        // It won't be labeled; host includes by:"hidden", so we detect by checking if any option text equals our submitted text is unreliable.
+        // Instead, allow voting all options; host will ignore self-votes. (Simpler & robust.)
+        options.forEach(opt => {
+          const btn = document.createElement("button");
+          btn.className = "opt";
+          btn.textContent = opt.text;
+          btn.addEventListener("click", ()=>{
+            this.sendHost({ type: MSG.VOTE, id, aid: opt.aid });
+            // lock UI
+            for (const b of v.querySelectorAll(".opt")) b.disabled = true;
+            const done = document.createElement("div");
+            done.className="muted";
+            done.textContent="Vote submitted!";
+            v.append(done);
+          });
+          v.append(btn);
+        });
+        panel.append(v);
+      }
+
+      renderResults({ id, tally, winnerAids }) {
+        panel.innerHTML = "";
+        const box = document.createElement("div");
+        box.innerHTML = `<div class="big">Results</div>`;
+        const list = document.createElement("div");
+        // we don't have the original author names on client—results screen is just tallies
+        for (const [aid, count] of Object.entries(tally).sort((a,b)=>b[1]-a[1])) {
+          const row = document.createElement("div");
+          row.textContent = `${count} vote${count===1?"":"s"} — ${winnerAids.includes(aid)?"🏆":""}`;
+          list.append(row);
+        }
+        box.append(list);
+
+        // Score snippet
+        if (this.scores && Object.keys(this.scores).length) {
+          const me = Object.entries(this.scores).find(([pid])=>true); // we don't know our id; show top 3 instead
+          const top = Object.entries(this.scores).sort((a,b)=>b[1]-a[1]).slice(0,3);
+          const sc = document.createElement("div");
+          sc.className="muted";
+          sc.textContent = `Leaders: ${top.map(([id,pts],i)=>`${i+1}. ${pts} pts`).join("  ")}`;
+          box.append(sc);
+        }
+        panel.append(box);
+      }
+
+      renderFinal(scores) {
+        panel.innerHTML = "";
+        const title = document.createElement("div");
+        title.className="big";
+        title.textContent = "🎉 Final Standings";
+        const list = document.createElement("div");
+        const sorted = Object.entries(scores).sort((a,b)=>b[1]-a[1]);
+        sorted.forEach(([id,pts],i)=>{
+          const row = document.createElement("div");
+          row.textContent = `${i===0?"🥇":i===1?"🥈":i===2?"🥉":"—"}  ${pts} pts`;
+          list.append(row);
+        });
+        const again = document.createElement("button");
+        again.className="ghost"; again.textContent="Stay in room for next game";
+        again.addEventListener("click", ()=> this.renderWaiting("Waiting for a new game…"));
+        panel.append(title, list, again);
+      }
+
+      startPhaseTimer(endsAt) {
+        this.endsAt = endsAt || null;
+        clearInterval(this._tock);
+        if (!endsAt) { timerEl.textContent = "—"; return; }
+        const tick = () => {
+          const ms = Math.max(0, (this.endsAt||0) - now());
+          timerEl.textContent = `${Math.ceil(ms/1000)}s`;
+          if (ms <= 0) clearInterval(this._tock);
+        };
+        tick();
+        this._tock = setInterval(tick, 250);
+      }
+
+      // --- Messaging helpers
+      sendJoin() {
+        // Try sending JOIN multiple times in case connection races
+        const payload = { type: MSG.JOIN, name: this.name };
+        const ok = this.sendHost(payload);
+        if (!ok) {
+          // Re-try shortly; harmless if not connected yet
+          setTimeout(()=> this.sendHost(payload), 500);
+        }
+      }
+
+      randomFunName() {
+        const A = ["Spicy","Wobbly","Sneaky","Quantum","Soggy","Turbo","Judge","Captain","Dr.","Major","Baby","Mega","Sir","Lady"];
+        const B = ["Pickle","Frog","Banana","Giraffe","Noodle","Lobster","Potato","Muffin","Taco","Walrus","Ferret","Goblin","Tiger"];
+        return `${A[Math.floor(Math.random()*A.length)]} ${B[Math.floor(Math.random()*B.length)]}`;
+      }
+    }
+
+    // Boot player
+    const paramHost = new URL(location.href).searchParams.get("host") || "";
+    const player = new QuipwhipPlayer(paramHost);
+  </script>
+</body>
+</html>
