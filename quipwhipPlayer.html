@@ -29,12 +29,13 @@
     .big{font-size:1.2rem}
     .timer{font-variant-numeric:tabular-nums; background:#0d1030; border:1px solid #363c86; padding:6px 10px; border-radius:10px}
     .row{display:grid; grid-template-columns:1fr 1fr; gap:10px}
-    .hidden{display:none !important}
     textarea{min-height:90px; resize:vertical}
     .opt{display:block; background:#121538; border:1px solid #333a86; border-radius:14px; padding:10px 12px; margin:10px 0; text-align:left}
     .opt[disabled]{opacity:.6}
     .ok{background:linear-gradient(180deg,#2c8d4f,#1c6b39); border-color:#36a65e}
     .ghost{background:#161a43}
+    .warn{background:linear-gradient(180deg,#8d6a2c,#6b4f1a); border-color:#a67c2d}
+    .error{background:linear-gradient(180deg,#8d2d2d,#6b1d1d); border-color:#aa3b3b}
   </style>
 </head>
 <body>
@@ -51,7 +52,7 @@
     import { JillBagPlayer } from 'https://elan-r.github.io/JillBag/jillBag.js';
 
     const MSG = {
-      JOIN: "join", LOBBY: "lobby", START:"start", PROMPT:"prompt", ANSWER:"answer",
+      JOIN:"join", LOBBY:"lobby", START:"start", PROMPT:"prompt", ANSWER:"answer",
       REVEAL:"reveal", VOTE:"vote", RESULTS:"results", SCORE:"score", PHASE:"phase", END:"end"
     };
 
@@ -64,26 +65,48 @@
       constructor(hostId) {
         super(hostId);
         this.name = "";
-        this.playerId = null; // our JillBag id is embedded in peer, but we don't need it separately
-        this.currentPrompt = null; // {id,text,endsAt}
-        this.options = []; // reveal options
         this.endsAt = null;
         this.scores = {};
+        this._tock = null;
+        this._pendingJoin = false;   // <- set true after pressing Join
+        this._lastError = "";
       }
 
-      // --- JillBag hooks
+      /* ---------- JillBag hooks ---------- */
       handlePeerReady(myId) {
         super.handlePeerReady(myId);
-        this.renderJoin();
+        // If URL already includes ?host=CODE and ?name=Foo, auto-fill
+        const p = new URL(location.href).searchParams;
+        const preHost = p.get("host");
+        const preName = p.get("name");
+        this.renderJoin(preHost || "", preName || "");
+        // If a host code was passed at construction, we might already be trying to connect.
       }
 
       handleOpen() {
         super.handleOpen();
-        // send JOIN once name is known (might not have yet)
-        const urlHost = new URL(location.href).searchParams.get("host");
-        if (!urlHost || urlHost !== this.hostId) {
-          // hostId provided in constructor; we keep going
+        // Connection to host successfully opened -> send JOIN if we have/expect a name
+        if (this._pendingJoin && this.name) {
+          this._sendJoinNow();
+          this.renderInfo("Connected! Waiting for lobby…");
         }
+      }
+
+      handleClose() {
+        super.handleClose();
+        // Connection closed; if user pressed Join earlier, try reconnecting briefly
+        if (this._pendingJoin) {
+          this.renderWarn("Disconnected. Reconnecting…");
+          setTimeout(()=> this._connectToHost(), 600);
+        } else {
+          this.renderWarn("Disconnected from host.");
+        }
+      }
+
+      handleError(err) {
+        super.handleError(err);
+        this._lastError = (err && (err.message || err.toString())) || "Unknown error";
+        this.renderError("Connection error: " + this._lastError);
       }
 
       handleData(data) {
@@ -92,15 +115,13 @@
             this.renderLobby(data.players, data.hostId);
             break;
           case MSG.START:
-            this.renderWaiting("Game starting…");
+            this.renderInfo("Game starting…");
             break;
           case MSG.PROMPT:
-            this.currentPrompt = data;
             this.startPhaseTimer(data.endsAt);
             this.renderPrompt(data);
             break;
           case MSG.REVEAL:
-            this.options = data.options;
             this.startPhaseTimer(data.endsAt);
             this.renderVote(data);
             break;
@@ -120,8 +141,8 @@
         }
       }
 
-      // --- UI
-      renderJoin() {
+      /* ---------- UI ---------- */
+      renderJoin(prefillHost="", prefillName="") {
         panel.innerHTML = "";
         const form = document.createElement("div");
         form.innerHTML = `
@@ -134,12 +155,11 @@
             <button id="joinBtn" class="ok">Join</button>
             <button id="randBtn" class="ghost">Random Name</button>
           </div>
-          <div class="muted" style="margin-top:10px">Tip: If you opened a link from the host, the host code may already be set.</div>
+          <div class="muted" style="margin-top:10px">If you opened a link from the host, the host code may already be filled in.</div>
         `;
         panel.append(form);
-        const params = new URL(location.href).searchParams;
-        const hostParam = params.get("host");
-        if (hostParam) $("#hostCode").value = hostParam;
+        $("#hostCode").value = prefillHost;
+        $("#name").value = prefillName;
 
         $("#randBtn").addEventListener("click", ()=>{
           $("#name").value = this.randomFunName();
@@ -149,22 +169,26 @@
           const code = ($("#hostCode").value || "").trim().toUpperCase();
           const nm = ($("#name").value || "Player").trim();
           if (!code) { alert("Enter the host code"); return; }
-          this.hostId = code;
           this.name = nm.slice(0,16);
-          // Ensure connection (JillBagPlayer connects on peer open; if already connected, ok)
-          this.sendJoin();
-          this.renderWaiting("Connecting to host…");
+
+          // IMPORTANT: reconnect to the *new* hostId
+          this._pendingJoin = true;
+          this.closeHost();            // close any old connection attempt
+          this.hostId = code;          // set new host code
+          this._connectToHost();       // actively attempt to connect
+
+          this.renderInfo("Connecting to host…");
         });
       }
 
-      renderLobby(players, hostId) {
+      renderLobby(players) {
         panel.innerHTML = "";
         const title = document.createElement("div");
         title.className="big";
         title.textContent = "Lobby";
         const you = document.createElement("div");
         you.className="muted";
-        you.textContent = `You: ${this.name || "(not set)"}`;
+        you.textContent = `You: ${this.name}`;
         const list = document.createElement("div");
         for (const p of players) {
           const line = document.createElement("div");
@@ -174,11 +198,17 @@
         panel.append(title, you, list);
       }
 
-      renderWaiting(msg="Waiting…") {
+      renderInfo(msg="…") {
         panel.innerHTML = `<div class="big">${msg}</div>`;
       }
+      renderWarn(msg) {
+        panel.innerHTML = `<div class="big">${msg}</div>`;
+      }
+      renderError(msg) {
+        panel.innerHTML = `<div class="big">${msg}</div><div class="muted" style="margin-top:6px">Tip: Double-check the room code and that the host page is open.</div>`;
+      }
 
-      renderPrompt({ id, text, endsAt }) {
+      renderPrompt({ id, text }) {
         panel.innerHTML = "";
         const q = document.createElement("div");
         q.innerHTML = `
@@ -196,10 +226,15 @@
         $("#submit").addEventListener("click", ()=>{
           const txt = ($("#answer").value || "").trim();
           if (!txt) { alert("Write something!"); return; }
-          this.sendHost({ type: MSG.ANSWER, id, text: txt });
+          const ok = this.sendHost({ type: MSG.ANSWER, id, text: txt });
+          if (!ok) {
+            this.renderError("Failed to send answer. Reconnecting…");
+            this._connectToHost();
+            return;
+          }
           $("#answer").disabled = true;
           $("#submit").disabled = true;
-          this.renderWaiting("Answer submitted! Waiting for others…");
+          this.renderInfo("Answer submitted! Waiting for others…");
         });
       }
 
@@ -207,47 +242,40 @@
         panel.innerHTML = "";
         const v = document.createElement("div");
         v.innerHTML = `<div class="muted">Pick your favorite</div>`;
-        // Determine our own answer aid (so we can't vote for ourselves)
-        // It won't be labeled; host includes by:"hidden", so we detect by checking if any option text equals our submitted text is unreliable.
-        // Instead, allow voting all options; host will ignore self-votes. (Simpler & robust.)
         options.forEach(opt => {
           const btn = document.createElement("button");
           btn.className = "opt";
           btn.textContent = opt.text;
           btn.addEventListener("click", ()=>{
-            this.sendHost({ type: MSG.VOTE, id, aid: opt.aid });
-            // lock UI
+            const ok = this.sendHost({ type: MSG.VOTE, id, aid: opt.aid });
             for (const b of v.querySelectorAll(".opt")) b.disabled = true;
             const done = document.createElement("div");
             done.className="muted";
-            done.textContent="Vote submitted!";
+            done.textContent = ok ? "Vote submitted!" : "Vote failed — retrying…";
             v.append(done);
+            if (!ok) setTimeout(()=> this.sendHost({ type: MSG.VOTE, id, aid: opt.aid }), 400);
           });
           v.append(btn);
         });
         panel.append(v);
       }
 
-      renderResults({ id, tally, winnerAids }) {
+      renderResults({ tally, winnerAids }) {
         panel.innerHTML = "";
         const box = document.createElement("div");
         box.innerHTML = `<div class="big">Results</div>`;
         const list = document.createElement("div");
-        // we don't have the original author names on client—results screen is just tallies
         for (const [aid, count] of Object.entries(tally).sort((a,b)=>b[1]-a[1])) {
           const row = document.createElement("div");
-          row.textContent = `${count} vote${count===1?"":"s"} — ${winnerAids.includes(aid)?"🏆":""}`;
+          row.textContent = `${count} vote${count===1?"":"s"} ${winnerAids.includes(aid)?"— 🏆":""}`;
           list.append(row);
         }
         box.append(list);
-
-        // Score snippet
         if (this.scores && Object.keys(this.scores).length) {
-          const me = Object.entries(this.scores).find(([pid])=>true); // we don't know our id; show top 3 instead
           const top = Object.entries(this.scores).sort((a,b)=>b[1]-a[1]).slice(0,3);
           const sc = document.createElement("div");
           sc.className="muted";
-          sc.textContent = `Leaders: ${top.map(([id,pts],i)=>`${i+1}. ${pts} pts`).join("  ")}`;
+          sc.textContent = `Leaders: ${top.map(([_,pts],i)=>`${i+1}. ${pts} pts`).join("  ")}`;
           box.append(sc);
         }
         panel.append(box);
@@ -267,7 +295,7 @@
         });
         const again = document.createElement("button");
         again.className="ghost"; again.textContent="Stay in room for next game";
-        again.addEventListener("click", ()=> this.renderWaiting("Waiting for a new game…"));
+        again.addEventListener("click", ()=> this.renderInfo("Waiting for a new game…"));
         panel.append(title, list, again);
       }
 
@@ -284,15 +312,10 @@
         this._tock = setInterval(tick, 250);
       }
 
-      // --- Messaging helpers
-      sendJoin() {
-        // Try sending JOIN multiple times in case connection races
+      /* ---------- Helpers ---------- */
+      _sendJoinNow() {
         const payload = { type: MSG.JOIN, name: this.name };
-        const ok = this.sendHost(payload);
-        if (!ok) {
-          // Re-try shortly; harmless if not connected yet
-          setTimeout(()=> this.sendHost(payload), 500);
-        }
+        this.sendHost(payload); // If it returns false, host isn't open yet; handleOpen will try again after reconnect
       }
 
       randomFunName() {
@@ -303,7 +326,8 @@
     }
 
     // Boot player
-    const paramHost = new URL(location.href).searchParams.get("host") || "";
+    const params = new URL(location.href).searchParams;
+    const paramHost = params.get("host") || "";
     const player = new QuipwhipPlayer(paramHost);
   </script>
 </body>
