@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Quipwhip — Host</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg:#0f1221; --panel:#171a2d; --ink:#eaf0ff; --muted:#9fb0ff; --accent:#7cf; --ok:#81f5a5; --warn:#ffd166; --bad:#ff6b6b;
+      --card:#12152a; --chip:#222649;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      color:var(--ink); background:radial-gradient(1200px 800px at 20% -10%, #203b92 0%, transparent 50%),
+              radial-gradient(900px 600px at 120% 20%, #5f2b90 0%, transparent 40%), var(--bg);
+      display:grid; grid-template-rows:auto 1fr; gap:12px; padding:16px;
+    }
+    header{
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+    }
+    .brand{font-weight:700; letter-spacing:.5px}
+    .wrap{display:grid; grid-template-columns:320px 1fr; gap:16px; min-height:0}
+    .card{
+      background:linear-gradient(180deg, #1a1d34, #121427); border:1px solid #2c315a; border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25);
+    }
+    h2{margin:.2rem 0 1rem 0; font-size:1.1rem; color:var(--muted); letter-spacing:.3px}
+    input, select, button, textarea{
+      width:100%; background:#0e1030; color:var(--ink); border:1px solid #2b2f59; border-radius:12px; padding:10px 12px; font-size:14px;
+    }
+    button{background:linear-gradient(180deg,#3a45a0,#2a327f); border-color:#4e57c7; cursor:pointer; transition:.15s transform ease;}
+    button:active{transform:translateY(1px)}
+    .row{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+    .muted{color:#aab3da; font-size:.9rem}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,"Roboto Mono",monospace}
+    .big{font-size:1.6rem}
+    .chip{display:inline-flex; align-items:center; gap:8px; background:var(--chip); border:1px solid #3b4180; padding:6px 10px; border-radius:999px; margin:4px 6px 0 0}
+    .chip .you{color:#ffd166}
+    .list{display:flex; flex-wrap:wrap}
+    .grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:10px}
+    .answer{background:var(--card); border:1px solid #2a2f5c; padding:12px; border-radius:12px}
+    .answer .by{font-size:.85rem; color:#9fb0ff}
+    .bar{height:10px; background:#22264f; border-radius:999px; overflow:hidden}
+    .bar > span{display:block; height:100%; background:linear-gradient(90deg,#7cf,#81f5a5)}
+    .flex{display:flex; align-items:center; gap:10px}
+    .center{display:flex; align-items:center; justify-content:center; text-align:center}
+    .timer{font-variant-numeric:tabular-nums; background:#0e1030; border:1px solid #3b4180; padding:6px 10px; border-radius:10px}
+    .qr{aspect-ratio:1/1; background:#0c0f2a; border:1px dashed #38408e; border-radius:12px; display:flex; align-items:center; justify-content:center; color:#9fb0ff}
+    .danger{background:linear-gradient(180deg,#8d2d2d,#6b1d1d); border-color:#aa3b3b}
+    .ok{background:linear-gradient(180deg,#2b8d4d,#1a6b37); border-color:#32a35b}
+    .ghost{background:#14173a; border-color:#2a2f5f}
+    .tiny{font-size:.82rem}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">🎤 Quipwhip <span class="muted">· Host</span></div>
+    <div class="flex">
+      <span class="timer" id="phaseTimer">—</span>
+      <button id="nextBtn" class="ghost">Next →</button>
+      <button id="resetBtn" class="danger">Reset Room</button>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="card" id="lobbyCard">
+      <h2>Lobby</h2>
+      <div class="muted">Players join using this code:</div>
+      <div class="big mono" id="roomCode">……</div>
+      <div class="tiny muted" id="joinLinkWrap" style="margin:.2rem 0 1rem 0;">
+        Share link: <span class="mono" id="joinLink">—</span>
+      </div>
+      <div class="grid" style="margin-bottom:12px">
+        <div class="card" style="padding:12px">
+          <div class="muted tiny">Min players</div>
+          <input type="number" id="minPlayers" min="2" max="12" value="3" />
+        </div>
+        <div class="card" style="padding:12px">
+          <div class="muted tiny">Answer time (sec)</div>
+          <input type="number" id="answerSec" min="10" max="180" value="45" />
+        </div>
+        <div class="card" style="padding:12px">
+          <div class="muted tiny">Voting time (sec)</div>
+          <input type="number" id="voteSec" min="10" max="180" value="30" />
+        </div>
+        <div class="card" style="padding:12px">
+          <div class="muted tiny">Prompts per game</div>
+          <input type="number" id="numPrompts" min="3" max="20" value="6" />
+        </div>
+      </div>
+
+      <div class="muted">Players</div>
+      <div id="players" class="list"></div>
+
+      <div style="margin-top:12px" class="row">
+        <button id="startBtn" class="ok">Start Game</button>
+        <button id="shufflePromptsBtn" class="ghost">Shuffle Prompts</button>
+      </div>
+    </section>
+
+    <section class="card" id="stageCard">
+      <h2 id="phaseTitle">—</h2>
+      <div id="stageArea"></div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { JillBagHost } from 'https://elan-r.github.io/JillBag/jillBag.js';
+
+    // --- Simple prompt bank (edit or extend freely)
+    const PROMPTS = [
+      "A rejected slogan for a dentist.",
+      "The worst thing to whisper to your boss.",
+      "An app nobody asked for.",
+      "A terrible name for a pet turtle.",
+      "What aliens are really here for.",
+      "The unofficial motto of laundry day.",
+      "The real reason the chicken crossed the road.",
+      "A movie title that gets weird if you add 'in my fridge'.",
+      "The worst souvenir from space camp.",
+      "What your cat is plotting at 3am."
+    ];
+
+    // Message types
+    const MSG = {
+      JOIN: "join",           // {name}
+      LOBBY: "lobby",         // {players:[{id,name}], hostId}
+      START: "start",         // {gameId, order:[promptIds]}
+      PROMPT: "prompt",       // {id, text, endsAt}
+      ANSWER: "answer",       // {id, text}
+      REVEAL: "reveal",       // {id, options:[{aid, text, by}], endsAt}
+      VOTE: "vote",           // {id, aid}
+      RESULTS: "results",     // {id, tally:{aid:count}, winnerAids:[...]}
+      SCORE: "score",         // {scores:{pid:points}}
+      PHASE: "phase",         // {name, endsAt?}
+      END: "end",             // {scores}
+      PING: "ping"
+    };
+
+    // Utility helpers
+    const $ = sel => document.querySelector(sel);
+    const el = (tag, cls, txt) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (txt != null) e.textContent = txt;
+      return e;
+    };
+    const now = () => Date.now();
+
+    class QuipwhipHost extends JillBagHost {
+      constructor() {
+        super();
+        // game state
+        this.players = new Map(); // id -> {name, score:0, connected:true}
+        this.gameId = null;
+        this.roundOrder = []; // array of prompt indices
+        this.answers = new Map(); // promptId -> Map(playerId -> {aid, text})
+        this.votes = new Map();   // promptId -> Map(voterId -> aid)
+        this.currentIdx = -1;
+        this.answerDeadline = 0;
+        this.voteDeadline = 0;
+
+        // UI refs
+        this.ui = {
+          code: $("#roomCode"),
+          players: $("#players"),
+          joinLink: $("#joinLink"),
+          startBtn: $("#startBtn"),
+          shuffleBtn: $("#shufflePromptsBtn"),
+          minPlayers: $("#minPlayers"),
+          answerSec: $("#answerSec"),
+          voteSec: $("#voteSec"),
+          numPrompts: $("#numPrompts"),
+          nextBtn: $("#nextBtn"),
+          resetBtn: $("#resetBtn"),
+          phaseTitle: $("#phaseTitle"),
+          stageArea: $("#stageArea"),
+          phaseTimer: $("#phaseTimer"),
+        };
+
+        this._timerTick = null;
+
+        this.ui.startBtn.addEventListener("click", () => this.startGame());
+        this.ui.shuffleBtn.addEventListener("click", () => this.shufflePrompts());
+        this.ui.nextBtn.addEventListener("click", () => this.advance());
+        this.ui.resetBtn.addEventListener("click", () => location.reload());
+      }
+
+      // --- JillBagHost hooks
+      handlePeerReady(myId) {
+        super.handlePeerReady(myId);
+        this.ui.code.textContent = this.hostId;
+        const link = `${location.origin}${location.pathname.replace(/quipwhipHost\.html$/,'')}quipwhipPlayer.html?host=${this.hostId}`;
+        this.ui.joinLink.textContent = link;
+        this.broadcastLobby();
+        this.setPhase("Waiting in Lobby");
+      }
+
+      handleOpen(otherId) {
+        super.handleOpen(otherId);
+        // wait for JOIN with name; we can mark connected
+        const p = this.players.get(otherId);
+        if (p) { p.connected = true; this.renderLobby(); this.broadcastLobby(); }
+      }
+
+      handleClose(otherId) {
+        super.handleClose(otherId);
+        const p = this.players.get(otherId);
+        if (p) { p.connected = false; this.renderLobby(); this.broadcastLobby(); }
+      }
+
+      handleData(otherId, data) {
+        if (!data || !data.type) return;
+        switch (data.type) {
+          case MSG.JOIN: {
+            const name = (data.name || "Player").slice(0, 16);
+            this.players.set(otherId, { name, score: 0, connected: true });
+            this.renderLobby();
+            this.broadcastLobby();
+            this.send(otherId, { type: MSG.LOBBY, players: this.playersList(), hostId: this.hostId });
+            break;
+          }
+          case MSG.ANSWER: {
+            if (this.currentIdx < 0) return;
+            const pid = this.roundOrder[this.currentIdx];
+            if (!this.answers.has(pid)) this.answers.set(pid, new Map());
+            const playerAnswers = this.answers.get(pid);
+            // Ignore after deadline
+            if (now() > this.answerDeadline) return;
+            const aid = `${otherId}-${pid}`;
+            playerAnswers.set(otherId, { aid, text: (data.text || "").slice(0, 120), by: otherId });
+            this.renderAnswerProgress(pid);
+            // Auto advance when all answered
+            if (playerAnswers.size >= this.livePlayers().length) {
+              this.advanceToReveal();
+            }
+            break;
+          }
+          case MSG.VOTE: {
+            const pid = this.roundOrder[this.currentIdx];
+            if (!this.votes.has(pid)) this.votes.set(pid, new Map());
+            // Ignore after deadline
+            if (now() > this.voteDeadline) return;
+            this.votes.get(pid).set(otherId, data.aid);
+            this.renderVoteProgress(pid);
+            // Auto advance if everyone voted
+            if (this.votes.get(pid).size >= this.livePlayers().length) {
+              this.finishVoting();
+            }
+            break;
+          }
+          default: break;
+        }
+      }
+
+      // --- Helpers
+      playersList() {
+        return Array.from(this.players, ([id, v]) => ({ id, name: v.name, connected: v.connected, score: v.score }));
+      }
+      livePlayers() {
+        return this.playersList().filter(p => p.connected);
+      }
+
+      broadcastLobby() {
+        const payload = { type: MSG.LOBBY, players: this.playersList(), hostId: this.hostId };
+        for (const [id] of this.players) this.send(id, payload);
+        this.renderLobby();
+      }
+
+      renderLobby() {
+        const box = this.ui.players;
+        box.innerHTML = "";
+        for (const { id, name, connected } of this.playersList()) {
+          const chip = el("div", "chip");
+          chip.append(el("span", "", connected ? "🟢" : "🔘"));
+          chip.append(el("span", "mono", name));
+          chip.append(el("span", "tiny muted", `· ${id.slice(-4)}`));
+          box.append(chip);
+        }
+        const ready = this.livePlayers().length >= Number(this.ui.minPlayers.value || 3);
+        this.ui.startBtn.disabled = !ready;
+      }
+
+      shufflePrompts() {
+        // no-op on UI, randomized when starting
+        this.blink(this.ui.shuffleBtn);
+      }
+
+      setPhase(name, endsAt=null) {
+        this.ui.phaseTitle.textContent = name;
+        this.sendAll({ type: MSG.PHASE, name, endsAt });
+        this.startPhaseTimer(endsAt);
+      }
+
+      startPhaseTimer(endsAt) {
+        clearInterval(this._timerTick);
+        const timer = this.ui.phaseTimer;
+        if (!endsAt) { timer.textContent = "—"; return; }
+        const tick = () => {
+          const ms = Math.max(0, endsAt - now());
+          timer.textContent = `${Math.ceil(ms/1000)}s`;
+          if (ms <= 0) clearInterval(this._timerTick);
+        };
+        tick();
+        this._timerTick = setInterval(tick, 250);
+      }
+
+      sendAll(msg) {
+        for (const [id] of this.players) this.send(id, msg);
+      }
+
+      // --- Game flow
+      startGame() {
+        if (this.livePlayers().length < Number(this.ui.minPlayers.value || 3)) return;
+        // Build prompt order
+        const N = Math.min(Number(this.ui.numPrompts.value || 6), PROMPTS.length);
+        const order = Array.from({length:PROMPTS.length}, (_,i)=>i).sort(()=>Math.random()-.5).slice(0,N);
+
+        this.gameId = Math.random().toString(36).slice(2,8).toUpperCase();
+        this.roundOrder = order;
+        this.answers.clear();
+        this.votes.clear();
+        this.currentIdx = -1;
+        for (const [,p] of this.players) p.score = 0;
+
+        this.sendAll({ type: MSG.START, gameId: this.gameId, order });
+        this.advance();
+      }
+
+      advance() {
+        // If we're mid-collecting answers, go reveal; if mid-vote, finish; else next prompt
+        if (this.currentIdx >= 0) {
+          const pid = this.roundOrder[this.currentIdx];
+          const aMap = this.answers.get(pid) || new Map();
+          const vMap = this.votes.get(pid) || new Map();
+          if (this.voteDeadline && now() < this.voteDeadline) return this.finishVoting();
+          if (this.answerDeadline && now() < this.answerDeadline) return this.advanceToReveal();
+        }
+        // Next prompt or end
+        this.currentIdx++;
+        if (this.currentIdx >= this.roundOrder.length) return this.endGame();
+        this.runPrompt(this.roundOrder[this.currentIdx]);
+      }
+
+      runPrompt(pid) {
+        // send prompt
+        const sec = Number(this.ui.answerSec.value || 45);
+        this.answerDeadline = now() + sec*1000;
+        const text = PROMPTS[pid];
+        this.setPhase(`Answering (${this.currentIdx+1}/${this.roundOrder.length})`, this.answerDeadline);
+        this.ui.stageArea.innerHTML = "";
+        const q = el("div","card");
+        q.append(el("div","muted","Prompt"));
+        q.append(el("div","big", text));
+        this.ui.stageArea.append(q);
+
+        // progress
+        const prog = el("div","muted", "Answers received: 0");
+        prog.id = "answerProg";
+        this.ui.stageArea.append(prog);
+
+        this.sendAll({ type: MSG.PROMPT, id: pid, text, endsAt: this.answerDeadline });
+
+        // safety auto-reveal
+        setTimeout(()=> this.advanceToReveal(), sec*1000 + 300);
+      }
+
+      renderAnswerProgress(pid) {
+        const count = (this.answers.get(pid) || new Map()).size;
+        $("#answerProg").textContent = `Answers received: ${count}/${this.livePlayers().length}`;
+      }
+
+      advanceToReveal() {
+        const pid = this.roundOrder[this.currentIdx];
+        const aMap = this.answers.get(pid) || new Map();
+        // Build options; if someone didn't answer, they simply have no entry
+        const options = Array.from(aMap.values());
+        if (options.length < 2) {
+          // pad with a silly placeholder so people can still vote
+          options.push({ aid:`placeholder-${pid}`, text:"(no answer submitted)", by:null });
+        }
+        // Voting phase
+        const sec = Number(this.ui.voteSec.value || 30);
+        this.voteDeadline = now() + sec*1000;
+        this.setPhase(`Voting (${this.currentIdx+1}/${this.roundOrder.length})`, this.voteDeadline);
+
+        // reveal UI
+        this.ui.stageArea.innerHTML = "";
+        const list = el("div","grid");
+        for (const opt of options.sort(()=>Math.random()-.5)) {
+          const card = el("div","answer");
+          card.append(el("div","", opt.text));
+          card.append(el("div","by", opt.by ? `by ${this.players.get(opt.by)?.name ?? "?"}` : "—"));
+          list.append(card);
+        }
+        this.ui.stageArea.append(list);
+
+        // send to players without author names to avoid bias
+        const hidden = options.map(o => ({ aid:o.aid, text:o.text, by:o.by ? "hidden" : null }));
+        this.sendAll({ type: MSG.REVEAL, id: pid, options: hidden, endsAt: this.voteDeadline });
+
+        // progress
+        const prog = el("div","muted","Votes: 0");
+        prog.id = "voteProg";
+        this.ui.stageArea.append(prog);
+
+        setTimeout(()=> this.finishVoting(), sec*1000 + 300);
+      }
+
+      renderVoteProgress(pid) {
+        const n = (this.votes.get(pid) || new Map()).size;
+        $("#voteProg").textContent = `Votes: ${n}/${this.livePlayers().length}`;
+      }
+
+      finishVoting() {
+        const pid = this.roundOrder[this.currentIdx];
+        const aMap = this.answers.get(pid) || new Map();
+        const vMap = this.votes.get(pid) || new Map();
+        // tally
+        const tally = {};
+        for (const ans of aMap.values()) tally[ans.aid] = 0;
+        for (const [, aid] of vMap) {
+          if (aid in tally) tally[aid] += 1;
+        }
+        // winners
+        const maxVotes = Math.max(0, ...Object.values(tally));
+        const winnerAids = Object.entries(tally).filter(([aid,c])=>c===maxVotes).map(([aid])=>aid);
+
+        // scoring: +100 per vote, +50 bonus for outright sole winner
+        for (const [pidPlayer, ans] of aMap) {
+          const votes = tally[ans.aid] || 0;
+          const p = this.players.get(pidPlayer);
+          if (!p) continue;
+          p.score += 100 * votes;
+          if (winnerAids.length === 1 && winnerAids[0] === ans.aid && votes>0) p.score += 50;
+        }
+
+        // Show results UI
+        this.ui.stageArea.innerHTML = "";
+        const list = el("div","grid");
+        // build combined view
+        const combined = Array.from(aMap.values()).map(a => ({
+          ...a, votes: tally[a.aid] || 0, name: this.players.get(a.by)?.name ?? "?"
+        })).sort((x,y)=>y.votes - x.votes);
+        for (const row of combined) {
+          const card = el("div","answer");
+          card.append(el("div","", row.text));
+          card.append(el("div","by", `by ${row.name} · ${row.votes} vote${row.votes===1?"":"s"}`));
+          const bar = el("div","bar"); const fill = el("span"); fill.style.width = combined[0].votes ? `${(row.votes/combined[0].votes)*100}%` : "0%";
+          bar.append(fill); card.append(bar);
+          if (winnerAids.includes(row.aid)) card.append(el("div","muted", "🏆 Winner"));
+          list.append(card);
+        }
+        this.ui.stageArea.append(list);
+
+        // notify players
+        this.sendAll({ type: MSG.RESULTS, id: pid, tally, winnerAids });
+
+        // scoreboard
+        const scores = {};
+        for (const [id,p] of this.players) scores[id] = p.score;
+        this.sendAll({ type: MSG.SCORE, scores });
+
+        const scoreBox = el("div","card");
+        scoreBox.append(el("div","muted","Scoreboard"));
+        const ul = el("div","");
+        const sorted = this.playersList().sort((a,b)=>b.score-a.score);
+        for (const s of sorted) {
+          const line = el("div","flex");
+          line.append(el("div","mono", s.name));
+          line.append(el("div","muted", "·"));
+          line.append(el("div","mono", `${s.score} pts`));
+          ul.append(line);
+        }
+        scoreBox.append(ul);
+        this.ui.stageArea.append(scoreBox);
+
+        this.setPhase("Results");
+        this.answerDeadline = 0;
+        this.voteDeadline = 0;
+      }
+
+      endGame() {
+        this.setPhase("Game Over");
+        const scores = {};
+        for (const [id,p] of this.players) scores[id] = p.score;
+        this.sendAll({ type: MSG.END, scores });
+
+        this.ui.stageArea.innerHTML = "";
+        const title = el("div","big","🎉 Final Standings");
+        const list = el("div","");
+        const sorted = this.playersList().sort((a,b)=>b.score-a.score);
+        sorted.forEach((s,i)=>{
+          const row = el("div","flex");
+          row.append(el("div","", `${i===0?"🥇":i===1?"🥈":i===2?"🥉":"—"}`));
+          row.append(el("div","mono", s.name));
+          row.append(el("div","muted","·"));
+          row.append(el("div","mono", `${s.score} pts`));
+          list.append(row);
+        });
+        this.ui.stageArea.append(title, list);
+      }
+
+      blink(btn){
+        btn.style.transform="scale(.98)";
+        setTimeout(()=>btn.style.transform="",120);
+      }
+    }
+
+    // Boot host
+    const host = new QuipwhipHost();
+  </script>
+</body>
+</html>
